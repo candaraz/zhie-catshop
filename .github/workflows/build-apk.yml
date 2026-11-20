@@ -12,55 +12,62 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
-      - name: Prepare, Build Web & Generate Android Project
+      - name: Build Web & Android APK
         env:
           VITE_SUPABASE_URL: https://abtlrdtsabfbwckmqwnp.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_ddX1l_GYKaiGl-TM82xjyQ_RELSjPUS
         run: |
-          # Jika file ter-upload di dalam subfolder, pindahkan otomatis ke root
+          set -ex
+          ls -la
+
+          # 1. Kalau ada file .zip di repo, ekstrak otomatis
+          for z in *.zip; do
+            if [ -f "$z" ]; then
+              unzip -o "$z"
+            fi
+          done
+
+          # 2. Kalau package.json ada di dalam subfolder, angkat ke root
           if [ ! -f "package.json" ]; then
-            SUBDIR=$(find . -maxdepth 2 -name "package.json" -printf '%h\n' | head -n 1)
-            if [ -n "$SUBDIR" ] && [ "$SUBDIR" != "." ]; then
-              cp -r "$SUBDIR"/* .
+            FOUND_PKG=$(find . -maxdepth 3 -name "package.json" | head -n 1)
+            if [ -n "$FOUND_PKG" ]; then
+              DIR=$(dirname "$FOUND_PKG")
+              cp -r "$DIR"/* .
             fi
           fi
 
-          npm install
-          npm run build
+          # 3. Kalau yang diupload adalah source project lengkap (ada package.json)
+          if [ -f "package.json" ]; then
+            npm install
+            npm install @capacitor/core @capacitor/cli @capacitor/android
+            npm run build
+          elif [ -f "index.html" ]; then
+            # Kalau yang diupload adalah zhie-catshop-deploy.zip (sudah ter-build)
+            mkdir -p dist
+            cp -r index.html assets icons logo.png manifest.webmanifest sw.js dist/ 2>/dev/null || true
+            npm init -y
+            npm install @capacitor/core @capacitor/cli @capacitor/android
+          else
+            echo "ERROR: File proyek belum di-upload ke repository ini!"
+            exit 1
+          fi
 
-          # Buat ulang folder android bersih langsung di server GitHub agar tidak ada file gradle yang kurang
+          # 4. Buat proyek Android bersih & build APK
           rm -rf android capacitor.config.ts capacitor.config.json
           npx cap init "Zhie Catshop" id.zhiecatshop.pos --web-dir dist
           npx cap add android
           npx cap sync android
-
-      - name: Set Custom App Icon & Build APK
-        run: |
-          python3 -c "
-          from PIL import Image
-          import os
-          if os.path.exists('public/icons/icon-512.png'):
-              logo = Image.open('public/icons/icon-512.png')
-              sizes = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
-              for folder, sz in sizes.items():
-                  t = os.path.join('android/app/src/main/res', folder)
-                  if os.path.exists(t):
-                      r = logo.resize((sz, sz), Image.LANCZOS)
-                      r.save(os.path.join(t, 'ic_launcher.png'), 'PNG')
-                      r.save(os.path.join(t, 'ic_launcher_round.png'), 'PNG')
-                      r.save(os.path.join(t, 'ic_launcher_foreground.png'), 'PNG')
-          " || true
 
           cd android
           chmod +x gradlew
