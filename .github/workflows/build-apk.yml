@@ -23,24 +23,49 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Install dependencies & Build Web App
+      - name: Prepare, Build Web & Generate Android Project
         env:
           VITE_SUPABASE_URL: https://abtlrdtsabfbwckmqwnp.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_ddX1l_GYKaiGl-TM82xjyQ_RELSjPUS
         run: |
+          # Jika file ter-upload di dalam subfolder, pindahkan otomatis ke root
+          if [ ! -f "package.json" ]; then
+            SUBDIR=$(find . -maxdepth 2 -name "package.json" -printf '%h\n' | head -n 1)
+            if [ -n "$SUBDIR" ] && [ "$SUBDIR" != "." ]; then
+              cp -r "$SUBDIR"/* .
+            fi
+          fi
+
           npm install
           npm run build
+
+          # Buat ulang folder android bersih langsung di server GitHub agar tidak ada file gradle yang kurang
+          rm -rf android capacitor.config.ts capacitor.config.json
+          npx cap init "Zhie Catshop" id.zhiecatshop.pos --web-dir dist
+          npx cap add android
           npx cap sync android
 
-      - name: Build Android APK
-        working-directory: android
+      - name: Set Custom App Icon & Build APK
         run: |
+          python3 -c "
+          from PIL import Image
+          import os
+          if os.path.exists('public/icons/icon-512.png'):
+              logo = Image.open('public/icons/icon-512.png')
+              sizes = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+              for folder, sz in sizes.items():
+                  t = os.path.join('android/app/src/main/res', folder)
+                  if os.path.exists(t):
+                      r = logo.resize((sz, sz), Image.LANCZOS)
+                      r.save(os.path.join(t, 'ic_launcher.png'), 'PNG')
+                      r.save(os.path.join(t, 'ic_launcher_round.png'), 'PNG')
+                      r.save(os.path.join(t, 'ic_launcher_foreground.png'), 'PNG')
+          " || true
+
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
-
-      - name: Rename APK
-        run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk ./Zhie-Catshop.apk
+          cp app/build/outputs/apk/debug/app-debug.apk ../Zhie-Catshop.apk
 
       - name: Upload Zhie-Catshop.apk Artifact
         uses: actions/upload-artifact@v4
